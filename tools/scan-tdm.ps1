@@ -1,5 +1,6 @@
-# ============================================================================
-#  scan-tdm.ps1  —  БЕЗОПАСНЫЙ "осмотрщик" приложения TDM Messenger
+﻿# ============================================================================
+#  scan-tdm.ps1  -  BEZOPASNYY "osmotrshchik" prilozheniya TDM Messenger
+#  (kommentarii po-russki nizhe; fayl sokhranen v UTF-8 s BOM)
 # ============================================================================
 #
 #  ЧТО ДЕЛАЕТ:
@@ -12,133 +13,200 @@
 #    - НЕ запускает TDM и никакие другие программы
 #    - НЕ меняет и не удаляет ни одного файла
 #    - НЕ отправляет НИЧЕГО в интернет
-#    - НЕ собирает ваши пароли: длинные "секретные" строки он прячет звёздочками
+#    - НЕ собирает ваши пароли: длинные "секретные" строки прячет звёздочками
 #    - НЕ требует прав администратора
 #
-#  КАК ЗАПУСТИТЬ (два шага):
+#  КАК ЗАПУСТИТЬ:
 #    1) Нажми "Пуск", напечатай  PowerShell , открой "Windows PowerShell".
-#    2) Перетащи в открывшееся окно этот файл и нажми Enter.
-#       (или напечатай:  powershell -ExecutionPolicy Bypass -File "путь\к\scan-tdm.ps1" )
+#    2) Напечатай команду (подставь свой путь к файлу) и нажми Enter:
+#       powershell -ExecutionPolicy Bypass -File "C:\Users\akritskiy\Desktop\scan-tdm.ps1"
 #
-#    Если TDM установлен в необычном месте и сканер его не нашёл — укажи папку сам:
-#       powershell -ExecutionPolicy Bypass -File "scan-tdm.ps1" -Path "C:\путь\к\папке TDM"
+#    Если сканер не нашёл TDM сам - укажи папку вручную:
+#       powershell -ExecutionPolicy Bypass -File "C:\Users\akritskiy\Desktop\scan-tdm.ps1" -Path "C:\путь\к\TDM"
 #
-#  КОГДА ЗАКОНЧИТ: открой файл  TDM_scan_report.txt  на Рабочем столе,
-#  скопируй его содержимое и пришли мне в чат.
+#  КОГДА ЗАКОНЧИТ: на Рабочем столе появится TDM_scan_report.txt
+#  Открой его, скопируй текст и пришли мне в чат.
 # ============================================================================
 
 param(
-    # Необязательно: прямой путь к папке TDM, если сканер её не нашёл сам
-    [string]$Path = ""
+    [string]$Path = "",
+    # Сюда попадут "хвосты" пути, если в названии папки есть пробелы
+    # (например "C:\Program Files\TDM Messenger") и Windows разорвал его на части.
+    [Parameter(ValueFromRemainingArguments = $true)]
+    [string[]]$Rest
 )
 
-# --- Куда сохраняем отчёт: на Рабочий стол, чтобы легко найти ---
-$reportPath = Join-Path $env:USERPROFILE "Desktop\TDM_scan_report.txt"
+# Если путь разорвало пробелами - склеиваем обратно.
+if ($Rest -and @($Rest).Count -gt 0 -and -not [string]::IsNullOrEmpty($Path)) {
+    if (-not (Test-Path -LiteralPath $Path)) {
+        $glued = ($Path + ' ' + (@($Rest) -join ' ')).Trim()
+        if (Test-Path -LiteralPath $glued) { $Path = $glued }
+    }
+}
+
+# --- Куда сохраняем отчёт (учитывает Рабочий стол, перенесённый в OneDrive) ---
+$desktop = [Environment]::GetFolderPath('Desktop')
+if ([string]::IsNullOrEmpty($desktop)) { $desktop = Join-Path $env:USERPROFILE 'Desktop' }
+$reportPath = Join-Path $desktop 'TDM_scan_report.txt'
+
 $report = New-Object System.Collections.Generic.List[string]
 
 function Say([string]$line) {
-    # Пишем строку и на экран, и в отчёт
     Write-Host $line
-    $report.Add($line)
+    $null = $report.Add($line)
 }
 
-# Прячем длинные "секретные" строки (похожие на токены/ключи), чтобы пароли
-# не попали в отчёт. Заменяем цепочки из 20+ букв/цифр на звёздочки.
+function SaveReport() {
+    try {
+        $report | Out-File -FilePath $reportPath -Encoding UTF8
+        Write-Host ""
+        Write-Host "Отчёт сохранён: $reportPath"
+    } catch {
+        Write-Host "Не удалось сохранить отчёт: $($_.Exception.Message)"
+    }
+}
+
+# Прячем длинные "секретные" строки (32+ символа подряд), чтобы возможные
+# пароли и ключи не попали в отчёт.
 function Mask([string]$text) {
-    if ($null -eq $text) { return "" }
-    return [System.Text.RegularExpressions.Regex]::Replace(
-        $text, '[A-Za-z0-9_\-\.]{20,}', '***СКРЫТО***')
+    if ([string]::IsNullOrEmpty($text)) { return "" }
+    return [System.Text.RegularExpressions.Regex]::Replace($text, '[A-Za-z0-9_\+/=]{32,}', '***СКРЫТО***')
 }
 
 Say "============================================================"
-Say " ОСМОТР TDM MESSENGER — отчёт"
+Say " ОСМОТР TDM MESSENGER - отчёт"
 Say " Дата: $(Get-Date -Format 'yyyy-MM-dd HH:mm')"
-Say " Компьютер: $env:COMPUTERNAME   Пользователь: $env:USERNAME"
+Say " Система: $([Environment]::OSVersion.VersionString)"
+Say " PowerShell: $($PSVersionTable.PSVersion)"
 Say "============================================================"
 Say ""
 
-# ---------------------------------------------------------------------------
-# ШАГ 1. Ищем папку приложения TDM
-# ---------------------------------------------------------------------------
-Say "[1] Ищу, где установлен TDM..."
+$candidates = New-Object System.Collections.Generic.List[string]
 
-$found = @()
+# ---------------------------------------------------------------------------
+# ШАГ 1. Ищем папку приложения TDM тремя способами
+# ---------------------------------------------------------------------------
+Say "[1] Ищу, где установлен TDM"
 
-if ($Path -ne "") {
-    if (Test-Path $Path) {
-        $found = @($Path)
-        Say "    Использую папку, которую ты указал: $Path"
+# --- Способ 1: путь, указанный вручную ---
+if (-not [string]::IsNullOrEmpty($Path)) {
+    if (Test-Path -LiteralPath $Path) {
+        $null = $candidates.Add((Resolve-Path -LiteralPath $Path).Path)
+        Say "    Указанная тобой папка принята: $Path"
     } else {
-        Say "    ВНИМАНИЕ: папка не найдена: $Path"
+        Say "    ВНИМАНИЕ: указанная папка не найдена: $Path"
     }
 }
 
-if ($found.Count -eq 0) {
-    # Обычные места, куда программы ставятся БЕЗ прав администратора и с ними
-    $roots = @(
-        (Join-Path $env:LOCALAPPDATA "Programs"),
-        $env:LOCALAPPDATA,
-        $env:APPDATA,
-        $env:ProgramFiles,
-        ${env:ProgramFiles(x86)}
-    ) | Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique
-
-    foreach ($root in $roots) {
-        # Ищем папки, в названии которых есть "tdm" (не глубже 3 уровней — чтобы быстро)
+# --- Способ 2: если TDM сейчас запущен, спросим у Windows его путь ---
+Say "    Смотрю запущенные программы..."
+try {
+    $procs = Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -match 'tdm' }
+    foreach ($p in $procs) {
         try {
-            $hits = Get-ChildItem -Path $root -Directory -Recurse -Depth 3 -ErrorAction SilentlyContinue |
-                    Where-Object { $_.Name -match 'tdm' }
-            foreach ($h in $hits) { $found += $h.FullName }
-        } catch {}
+            if ($p.Path) {
+                $dir = Split-Path -Parent $p.Path
+                Say "    [+] TDM запущен: $($p.Path)"
+                $null = $candidates.Add($dir)
+            }
+        } catch { }
     }
-    $found = $found | Select-Object -Unique
+    if (-not $procs) { Say "    (запущенного TDM не вижу - это нормально, если он закрыт)" }
+} catch {
+    Say "    (не удалось прочитать список программ)"
 }
 
-if ($found.Count -eq 0) {
+# --- Способ 3: ярлык в меню "Пуск" ---
+Say "    Смотрю ярлыки в меню Пуск..."
+$startMenus = @(
+    (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs'),
+    (Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs')
+) | Where-Object { $_ -and (Test-Path -LiteralPath $_) }
+
+foreach ($sm in $startMenus) {
+    try {
+        $lnks = Get-ChildItem -LiteralPath $sm -Recurse -Filter '*.lnk' -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -match 'tdm' }
+        foreach ($lnk in $lnks) {
+            try {
+                $shell = New-Object -ComObject WScript.Shell
+                $target = $shell.CreateShortcut($lnk.FullName).TargetPath
+                if ($target -and (Test-Path -LiteralPath $target)) {
+                    Say "    [+] Ярлык '$($lnk.Name)' ведёт на: $target"
+                    $null = $candidates.Add((Split-Path -Parent $target))
+                }
+            } catch { }
+        }
+    } catch { }
+}
+
+# --- Способ 4: поиск папок со словом tdm в обычных местах установки ---
+Say "    Ищу папки со словом 'tdm' в местах установки программ..."
+$roots = @(
+    (Join-Path $env:LOCALAPPDATA 'Programs'),
+    $env:LOCALAPPDATA,
+    $env:APPDATA,
+    $env:ProgramFiles,
+    ${env:ProgramFiles(x86)}
+) | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -Unique
+
+foreach ($root in $roots) {
+    $hits = $null
+    try {
+        $hits = Get-ChildItem -LiteralPath $root -Directory -Recurse -Depth 3 -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -match 'tdm' }
+    } catch {
+        # Запасной путь для очень старых версий PowerShell (без параметра -Depth)
+        try {
+            $hits = Get-ChildItem -LiteralPath $root -Directory -ErrorAction SilentlyContinue |
+                    Where-Object { $_.Name -match 'tdm' }
+        } catch { }
+    }
+    foreach ($h in $hits) { $null = $candidates.Add($h.FullName) }
+}
+
+$found = $candidates | Select-Object -Unique
+
+if (-not $found -or @($found).Count -eq 0) {
     Say ""
     Say "    Папку TDM автоматически найти не удалось."
-    Say "    Подскажи путь вручную. Как узнать путь:"
-    Say "      - найди ярлык TDM на Рабочем столе,"
-    Say "      - правой кнопкой -> 'Расположение файла',"
-    Say "      - скопируй адрес из строки проводника,"
-    Say "      - запусти сканер так:"
-    Say "        powershell -ExecutionPolicy Bypass -File `"scan-tdm.ps1`" -Path `"вставь_путь_сюда`""
-    Say ""
-    Say "Готово. Отчёт сохранён: $reportPath"
-    $report | Out-File -FilePath $reportPath -Encoding UTF8
+    Say "    Сделай так: найди ярлык TDM, правой кнопкой -> 'Расположение файла',"
+    Say "    скопируй адрес из строки проводника и запусти сканер так:"
+    Say "      powershell -ExecutionPolicy Bypass -File `"$PSCommandPath`" -Path `"вставь_путь_сюда`""
+    SaveReport
     return
 }
 
-Say "    Нашёл возможные папки TDM:"
-foreach ($f in $found) { Say "      - $f" }
-# Берём первую найденную как основную
-$appDir = $found[0]
 Say ""
-Say "    Осматриваю: $appDir"
+Say "    Возможные папки TDM:"
+foreach ($f in $found) { Say "      - $f" }
+
+$appDir = @($found)[0]
+Say ""
+Say "    Подробно осматриваю: $appDir"
 Say ""
 
 # ---------------------------------------------------------------------------
-# ШАГ 2. Из чего собрана программа? (Electron / обычное приложение)
+# ШАГ 2. Из чего собрана программа
 # ---------------------------------------------------------------------------
 Say "[2] Из чего собрано приложение"
 
 $allFiles = @()
 try {
-    $allFiles = Get-ChildItem -Path $appDir -Recurse -File -ErrorAction SilentlyContinue
-} catch {}
+    $allFiles = @(Get-ChildItem -LiteralPath $appDir -Recurse -File -ErrorAction SilentlyContinue)
+} catch { }
 
 Say "    Всего файлов внутри: $($allFiles.Count)"
 
-# Признаки Electron (это значит, что внутри программы — обычный веб-код на
-# JavaScript; такие приложения иногда можно расширять). Ищем характерные файлы.
-$electronMarkers = @('app.asar','electron.exe','ffmpeg.dll','libEGL.dll',
-                     'chrome_100_percent.pak','LICENSES.chromium.html','v8_context_snapshot.bin')
+# Признаки Electron: значит внутри программы обычный веб-код (JavaScript).
+$electronMarkers = @('app.asar', 'electron.exe', 'ffmpeg.dll', 'libEGL.dll',
+                     'chrome_100_percent.pak', 'LICENSES.chromium.html', 'v8_context_snapshot.bin')
 $isElectron = $false
 foreach ($m in $electronMarkers) {
     $hit = $allFiles | Where-Object { $_.Name -ieq $m } | Select-Object -First 1
     if ($hit) {
         $isElectron = $true
-        Say "    [+] Найден признак Electron: $($hit.Name)  ->  $($hit.FullName)"
+        Say "    [+] Признак Electron: $($hit.Name)  ->  $($hit.FullName)"
     }
 }
 if ($isElectron) {
@@ -147,7 +215,15 @@ if ($isElectron) {
     Say "           который иногда даёт зацепки для автоматизации."
 } else {
     Say "    ВЫВОД: явных признаков Electron не видно. Возможно, это обычная"
-    Say "           программа (написана на C++/C# и т.п.) — тогда зацепок меньше."
+    Say "           программа (C++/C# и т.п.) - тогда зацепок меньше."
+}
+
+# Список исполняемых файлов - полезно понять состав программы
+$exes = @($allFiles | Where-Object { $_.Extension -ieq '.exe' })
+Say "    Программ (.exe) внутри: $($exes.Count)"
+foreach ($e in ($exes | Select-Object -First 15)) {
+    $mb = [math]::Round($e.Length / 1MB, 1)
+    Say "      - $($e.Name)  [$mb МБ]"
 }
 Say ""
 
@@ -156,80 +232,71 @@ Say ""
 # ---------------------------------------------------------------------------
 Say "[3] Файлы настроек и упаковки"
 
-# package.json — "паспорт" Electron-приложения, там бывает имя и версия
 $pkg = $allFiles | Where-Object { $_.Name -ieq 'package.json' } | Select-Object -First 1
 if ($pkg) {
-    Say "    Найден package.json: $($pkg.FullName)"
+    Say "    Найден package.json (паспорт Electron-приложения): $($pkg.FullName)"
     try {
-        $content = Get-Content $pkg.FullName -Raw -ErrorAction SilentlyContinue
-        Say "    --- содержимое package.json (секреты скрыты) ---"
-        foreach ($ln in ($content -split "`n")) { Say "      $(Mask $ln)" }
-        Say "    --- конец package.json ---"
+        $lines = Get-Content -LiteralPath $pkg.FullName -ErrorAction SilentlyContinue
+        Say "    --- содержимое (секреты скрыты) ---"
+        foreach ($ln in ($lines | Select-Object -First 60)) { Say "      $(Mask $ln)" }
+        Say "    --- конец ---"
     } catch { Say "    (не удалось прочитать)" }
+} else {
+    Say "    package.json не найден."
 }
 
-# asar — "коробка", в которую упакован код приложения
-$asar = $allFiles | Where-Object { $_.Extension -ieq '.asar' }
+$asar = @($allFiles | Where-Object { $_.Extension -ieq '.asar' })
 foreach ($a in $asar) {
-    $sizeMB = [math]::Round($a.Length / 1MB, 1)
-    Say "    Упакованный код (.asar): $($a.FullName)  [$sizeMB МБ]"
+    $mb = [math]::Round($a.Length / 1MB, 1)
+    Say "    Упакованный код (.asar): $($a.FullName)  [$mb МБ]"
 }
 
-# Файлы настроек
-$configExt = @('.json','.ini','.cfg','.conf','.yaml','.yml','.xml','.env','.config','.toml')
-$configs = $allFiles | Where-Object { $configExt -contains $_.Extension.ToLower() }
+$configExt = @('.json', '.ini', '.cfg', '.conf', '.yaml', '.yml', '.xml', '.env', '.config', '.toml')
+$configs = @($allFiles | Where-Object { $configExt -contains $_.Extension.ToLower() })
 Say "    Файлов настроек найдено: $($configs.Count)"
-foreach ($c in ($configs | Select-Object -First 40)) {
-    Say "      - $($c.FullName)"
-}
+foreach ($c in ($configs | Select-Object -First 40)) { Say "      - $($c.FullName)" }
 if ($configs.Count -gt 40) { Say "      ... и ещё $($configs.Count - 40)" }
 Say ""
 
 # ---------------------------------------------------------------------------
-# ШАГ 4. Ищем зацепки: bot / api / token / webhook / веб-адреса
+# ШАГ 4. Ищем зацепки: bot / api / token / webhook / адреса
 # ---------------------------------------------------------------------------
 Say "[4] Поиск зацепок для подключения (bot / api / token / webhook / адреса)"
-Say "    (значения возможных секретов скрыты звёздочками)"
+Say "    (возможные секреты скрыты звёздочками)"
 
-# Ищем только в текстовых файлах разумного размера (до 5 МБ), чтобы не читать
-# тяжёлые двоичные файлы и не тормозить.
-$textExt = @('.json','.js','.ts','.txt','.ini','.cfg','.conf','.yaml','.yml',
-             '.xml','.env','.config','.toml','.html','.md','.log')
+$textExt = @('.json', '.js', '.ts', '.txt', '.ini', '.cfg', '.conf', '.yaml', '.yml',
+             '.xml', '.env', '.config', '.toml', '.html', '.md', '.log')
 $keywords = 'bot|api|token|webhook|endpoint|wss?://|https?://'
 
-$scanFiles = $allFiles | Where-Object {
+$scanFiles = @($allFiles | Where-Object {
     ($textExt -contains $_.Extension.ToLower()) -and ($_.Length -lt 5MB)
-}
+})
 Say "    Просматриваю текстовых файлов: $($scanFiles.Count)"
 
 $matchCount = 0
 foreach ($file in $scanFiles) {
+    if ($matchCount -ge 200) { break }
     try {
-        $hits = Select-String -Path $file.FullName -Pattern $keywords -AllMatches -ErrorAction SilentlyContinue
+        $hits = Select-String -LiteralPath $file.FullName -Pattern $keywords -AllMatches -ErrorAction SilentlyContinue
         foreach ($h in $hits) {
-            if ($matchCount -ge 200) { break }   # не раздуваем отчёт
-            $line = ($h.Line).Trim()
-            if ($line.Length -gt 200) { $line = $line.Substring(0,200) + "..." }
+            if ($matchCount -ge 200) { break }
+            $line = "$($h.Line)".Trim()
+            if ($line.Length -gt 200) { $line = $line.Substring(0, 200) + "..." }
             Say "      $($file.Name):$($h.LineNumber)  ->  $(Mask $line)"
             $matchCount++
         }
-    } catch {}
-    if ($matchCount -ge 200) { Say "      ... (показаны первые 200 совпадений)"; break }
+    } catch { }
 }
+if ($matchCount -ge 200) { Say "      ... (показаны первые 200 совпадений)" }
 if ($matchCount -eq 0) {
-    Say "      Ничего похожего не найдено в открытом виде."
-    Say "      Если код упакован в .asar (см. шаг 3), зацепки могут быть внутри коробки —"
-    Say "      напиши мне, и я подскажу безопасный способ заглянуть и туда."
+    Say "      Ничего похожего в открытом виде не найдено."
+    Say "      Если код упакован в .asar (см. шаг 3), зацепки могут быть внутри."
 }
 Say ""
 
-# ---------------------------------------------------------------------------
-# Итог
-# ---------------------------------------------------------------------------
 Say "============================================================"
 Say " ОСМОТР ЗАВЕРШЁН. Ничего не изменено, наружу ничего не отправлено."
-Say " Отчёт сохранён: $reportPath"
 Say " Пришли мне содержимое этого файла в чат."
 Say "============================================================"
 
-$report | Out-File -FilePath $reportPath -Encoding UTF8
+SaveReport
