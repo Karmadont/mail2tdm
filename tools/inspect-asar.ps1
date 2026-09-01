@@ -81,14 +81,19 @@ $baseOffset = 0
 $tree = $null
 try {
     $fs = [System.IO.File]::OpenRead($Asar)
-    $head = New-Object byte[] 12
-    $null = $fs.Read($head, 0, 12)
-    # Формат asar: [uint32=4][uint32=H][uint32=длина JSON][сам JSON ...]
-    $H       = [BitConverter]::ToUInt32($head, 4)
-    $jsonLen = [BitConverter]::ToUInt32($head, 8)
+    $head = New-Object byte[] 16
+    $null = $fs.Read($head, 0, 16)
+    # Формат asar (два вложенных "пикла"):
+    #   [0:4]  = 4          (служебное)
+    #   [4:8]  = S          (размер оглавления в байтах)
+    #   [8:12] = S-4        (служебное)
+    #   [12:16]= длина JSON-строки
+    #   с [16:] начинается сам JSON-текст оглавления
+    $S       = [BitConverter]::ToUInt32($head, 4)
+    $jsonLen = [BitConverter]::ToUInt32($head, 12)
     if ($jsonLen -gt 0 -and $jsonLen -lt $fileInfo.Length) {
         $jsonBytes = New-Object byte[] $jsonLen
-        # позиция уже на 12 после чтения заголовка - читаем дальше подряд
+        # позиция уже на 16 после чтения заголовка - читаем JSON подряд
         $read = 0
         while ($read -lt $jsonLen) {
             $n = $fs.Read($jsonBytes, $read, $jsonLen - $read)
@@ -97,7 +102,8 @@ try {
         }
         $jsonText = [System.Text.Encoding]::UTF8.GetString($jsonBytes, 0, $read)
         $tree = $jsonText | ConvertFrom-Json
-        $baseOffset = 8 + $H     # с этого места в файле начинаются сами данные
+        # Данные начинаются после size-пикла (8 б.) и оглавления (S б.)
+        $baseOffset = 8 + $S
         $jsonOk = $true
     }
 } catch {
@@ -194,9 +200,17 @@ Say "[3] Поиск зацепок по всему архиву (адреса, �
 Say "    (возможные секреты скрыты; читаю кусками, это может занять минуту)"
 
 $urlRegex = New-Object System.Text.RegularExpressions.Regex '(?:https?|wss?)://[^\s"''<>\\\)\]]{2,200}'
-$kwRegex  = New-Object System.Text.RegularExpressions.Regex '(?i)(socket\.io|websocket|new WebSocket|webhook|/api/|Bearer |Authorization|oauth|bot[A-Za-z]*|access[_-]?token|client[_-]?secret)'
+# Ключевые слова: "bot" считаем только как отдельное слово, чтобы не ловить
+# bottom/botany/botswana и прочий мусор из библиотек.
+$kwRegex  = New-Object System.Text.RegularExpressions.Regex '(?i)(socket\.io|websocket|webhook|/api/|Bearer\b|Authorization|oauth|access[_-]?token|client[_-]?secret|\bbots?\b|bot[_-]?api|bot[_-]?token|chat\s?bot)'
 
-$urls = New-Object System.Collections.Generic.HashSet[string]
+# Что считаем "своим/интересным" адресом (а не документацией библиотек)
+$hotRegex   = New-Object System.Text.RegularExpressions.Regex '(?i)(mos\.ru|\btdm|/api/|wss?://|127\.0\.0\.1|localhost)'
+# Явный "шум" - ссылки на документацию открытых библиотек
+$boringRegex = New-Object System.Text.RegularExpressions.Regex '(?i)(github|wikipedia|ecma-international|w3\.org|mozilla|python\.org|amazon|aws|google|goo\.gl|bower\.io|brew\.sh|nodejs|npmjs|jquery|stackoverflow|creativecommons|editorconfig|fsf\.org|feross|izs\.me|codeclimate|testling|fb\.me|nist\.gov|garant\.ru|example\.(com|org)|foo\.com|\.spec\.whatwg)'
+
+$urls = New-Object System.Collections.Generic.HashSet[string]   # все адреса
+$hot  = New-Object System.Collections.Generic.HashSet[string]   # свои/интересные
 $kwCounts = @{}
 
 try {
@@ -214,7 +228,11 @@ try {
 
         foreach ($m in $urlRegex.Matches($text)) {
             $u = $m.Value.TrimEnd('.',',',';')
-            if ($u.Length -le 200) { $null = $urls.Add((Mask $u)) }
+            if ($u.Length -le 200) {
+                $mu = Mask $u
+                $null = $urls.Add($mu)
+                if ($hotRegex.IsMatch($u)) { $null = $hot.Add($mu) }
+            }
         }
         foreach ($m in $kwRegex.Matches($text)) {
             $k = $m.Value.ToLower().Trim()
@@ -245,18 +263,24 @@ if ($kwCounts.Count -eq 0) {
     }
 }
 Say ""
-Say "    НАЙДЕННЫЕ АДРЕСА (уникальные, до 150 штук):"
-if ($urls.Count -eq 0) {
-    Say "      (адресов не найдено)"
+Say "    >>> ГЛАВНОЕ: СВОИ АДРЕСА TDM (сервера, api, веб-сокеты, localhost):"
+if ($hot.Count -eq 0) {
+    Say "      (не найдено - возможно, адреса собираются в коде из кусков)"
 } else {
-    $sorted = $urls | Sort-Object
-    $shown = 0
-    foreach ($u in $sorted) {
-        Say "      $u"
-        $shown++
-        if ($shown -ge 150) { Say "      ... (показаны первые 150 из $($urls.Count))"; break }
-    }
+    foreach ($u in ($hot | Sort-Object | Select-Object -First 200)) { Say "      $u" }
+    if ($hot.Count -gt 200) { Say "      ... (показаны первые 200 из $($hot.Count))" }
 }
+Say ""
+Say "    ПРОЧИЕ НЕОБЫЧНЫЕ АДРЕСА (без явной документации библиотек, до 80):"
+$other = $urls | Where-Object { -not $hot.Contains($_) -and -not $boringRegex.IsMatch($_) }
+if (-not $other -or @($other).Count -eq 0) {
+    Say "      (только ссылки на документацию библиотек - не показываю)"
+} else {
+    foreach ($u in (@($other) | Sort-Object | Select-Object -First 80)) { Say "      $u" }
+    if (@($other).Count -gt 80) { Say "      ... (показаны первые 80 из $(@($other).Count))" }
+}
+Say ""
+Say "    Всего уникальных адресов найдено: $($urls.Count) (из них своих/интересных: $($hot.Count))"
 Say ""
 
 Say "============================================================"
