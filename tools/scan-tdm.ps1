@@ -19,10 +19,10 @@
 #  КАК ЗАПУСТИТЬ:
 #    1) Нажми "Пуск", напечатай  PowerShell , открой "Windows PowerShell".
 #    2) Напечатай команду (подставь свой путь к файлу) и нажми Enter:
-#       powershell -ExecutionPolicy Bypass -File "C:\Users\akritskiy\Desktop\scan-tdm.ps1"
+#       powershell -ExecutionPolicy Bypass -File "C:\Users\ИМЯ_ПОЛЬЗОВАТЕЛЯ\Desktop\scan-tdm.ps1"
 #
 #    Если сканер не нашёл TDM сам - укажи папку вручную:
-#       powershell -ExecutionPolicy Bypass -File "C:\Users\akritskiy\Desktop\scan-tdm.ps1" -Path "C:\путь\к\TDM"
+#       powershell -ExecutionPolicy Bypass -File "C:\Users\ИМЯ_ПОЛЬЗОВАТЕЛЯ\Desktop\scan-tdm.ps1" -Path "C:\путь\к\TDM"
 #
 #  КОГДА ЗАКОНЧИТ: на Рабочем столе появится TDM_scan_report.txt
 #  Открой его, скопируй текст и пришли мне в чат.

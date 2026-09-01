@@ -31,7 +31,7 @@
 3. Вставь в синее окно эту команду и нажми **Enter**:
 
 ```
-powershell -ExecutionPolicy Bypass -File "C:\Users\akritskiy\Desktop\scan-tdm.ps1"
+powershell -ExecutionPolicy Bypass -File "C:\Users\ИМЯ_ПОЛЬЗОВАТЕЛЯ\Desktop\scan-tdm.ps1"
 ```
 
 Если сканер напишет, что не нашёл папку TDM — укажи её вручную. Как узнать путь:
@@ -39,7 +39,7 @@ powershell -ExecutionPolicy Bypass -File "C:\Users\akritskiy\Desktop\scan-tdm.ps
 проводника и запусти так:
 
 ```
-powershell -ExecutionPolicy Bypass -File "C:\Users\akritskiy\Desktop\scan-tdm.ps1" -Path "вставь_путь_сюда"
+powershell -ExecutionPolicy Bypass -File "C:\Users\ИМЯ_ПОЛЬЗОВАТЕЛЯ\Desktop\scan-tdm.ps1" -Path "вставь_путь_сюда"
 ```
 
 ## Что потом
