@@ -55,9 +55,11 @@ Public Sub ProcessMail(ByVal mail As Object)
     If Not LoadConfig() Then Exit Sub
     If mail Is Nothing Then Exit Sub
 
-    ' --- Отбор: то ли это письмо, которое нам нужно ---
+    ' --- Отбор писем ---
+    ' По умолчанию фильтры в настройках пустые, значит пересылаются ВСЕ письма.
+    ' Фильтры оставлены на будущее - вдруг понадобится сузить поток.
     If Not MailMatches(mail) Then
-        WriteLog "ПРОПУЩЕНО (не подходит по фильтру): " & SafeSubject(mail)
+        WriteLog "ПРОПУЩЕНО (не подходит под заданный фильтр): " & SafeSubject(mail)
         Exit Sub
     End If
 
@@ -121,8 +123,18 @@ Private Function BuildMessage(ByVal mail As Object) As String
     s = "Новая задача из почты" & vbCrLf & _
         "Тема: " & SafeSubject(mail) & vbCrLf & _
         "От: " & SafeSender(mail) & vbCrLf & _
-        "Получено: " & Format$(SafeReceived(mail), "dd.mm.yyyy HH:nn") & vbCrLf & _
-        vbCrLf & body
+        "Получено: " & Format$(SafeReceived(mail), "dd.mm.yyyy HH:nn") & vbCrLf
+
+    ' Если к письму приложены файлы - обязательно скажем об этом в канале,
+    ' иначе о вложениях никто не узнает (сами файлы пока не пересылаются).
+    Dim att As String
+    att = AttachmentsInfo(mail)
+    If Len(att) > 0 Then
+        s = s & "Вложения (" & CStr(AttachmentsCount(mail)) & "): " & att & vbCrLf & _
+                "  ^ файлы остались в письме - откройте его в Outlook" & vbCrLf
+    End If
+
+    s = s & vbCrLf & body
 
     ' Обрезаем слишком длинное сообщение
     If cfgMaxLength > 0 And Len(s) > cfgMaxLength Then
@@ -130,6 +142,30 @@ Private Function BuildMessage(ByVal mail As Object) As String
     End If
 
     BuildMessage = s
+End Function
+
+
+' Сколько файлов приложено к письму
+Private Function AttachmentsCount(ByVal mail As Object) As Long
+    On Error Resume Next
+    AttachmentsCount = mail.Attachments.Count
+End Function
+
+' Список имён приложенных файлов через запятую
+Private Function AttachmentsInfo(ByVal mail As Object) As String
+    On Error Resume Next
+    Dim i As Long, n As Long, s As String
+    n = mail.Attachments.Count
+    If n = 0 Then Exit Function
+    For i = 1 To n
+        If i > 10 Then
+            s = s & ", ... и ещё " & CStr(n - 10)
+            Exit For
+        End If
+        If Len(s) > 0 Then s = s & ", "
+        s = s & mail.Attachments.Item(i).FileName
+    Next i
+    AttachmentsInfo = s
 End Function
 
 
