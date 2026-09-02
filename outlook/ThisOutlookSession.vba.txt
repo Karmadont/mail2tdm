@@ -1,0 +1,100 @@
+' ============================================================================
+'  Код для объекта ThisOutlookSession
+' ============================================================================
+'
+'  КУДА ВСТАВЛЯТЬ:
+'    1. В Outlook нажми Alt+F11.
+'    2. Слева в дереве найди "ThisOutlookSession" и открой двойным щелчком.
+'    3. СКОПИРУЙ текст ниже и ВСТАВЬ туда (копировать-вставить, не импортировать).
+'    4. Перезапусти Outlook - тогда "сторож" начнёт работать.
+'
+'  ЧТО ЭТО ДЕЛАЕТ:
+'    Следит за папкой входящих писем. Как только приходит новое письмо -
+'    передаёт его в модуль Mail2TDM, который решает, пересылать ли его в TDM.
+'
+'  ВАЖНО: пока в настройках TestMode=1, НИЧЕГО не отправляется -
+'  только пишется в журнал. Это защита от случайной рассылки.
+' ============================================================================
+
+Option Explicit
+
+Private WithEvents WatchedItems As Outlook.Items
+
+
+' Запускается автоматически при старте Outlook
+Private Sub Application_Startup()
+    HookFolder
+End Sub
+
+
+' Подключаемся к нужной папке. Если что-то не так - пишем в журнал и не мешаем работе.
+Private Sub HookFolder()
+    On Error GoTo Fail
+
+    Dim ns As Outlook.NameSpace
+    Set ns = Application.GetNamespace("MAPI")
+
+    Dim targetFolder As Outlook.Folder
+    Dim mailboxName As String, folderPath As String
+
+    mailboxName = Mail2TDM.GetMailboxName()
+    folderPath = Mail2TDM.GetFolderPath()
+
+    If Len(mailboxName) = 0 Then
+        ' Основной ящик, папка "Входящие"
+        Set targetFolder = ns.GetDefaultFolder(olFolderInbox)
+    Else
+        ' Общий/дополнительный ящик - ищем по названию в списке слева
+        Dim st As Outlook.Store
+        Dim found As Boolean
+        found = False
+        For Each st In ns.Stores
+            If InStr(1, st.DisplayName, mailboxName, vbTextCompare) > 0 Then
+                Set targetFolder = st.GetDefaultFolder(olFolderInbox)
+                found = True
+                Exit For
+            End If
+        Next st
+        If Not found Then
+            Mail2TDM.WriteLog "НЕ НАЙДЕН ящик: " & mailboxName & " - слежу за основным ящиком."
+            Set targetFolder = ns.GetDefaultFolder(olFolderInbox)
+        End If
+    End If
+
+    ' Если указана вложенная папка - спускаемся в неё
+    If Len(folderPath) > 0 Then
+        Dim parts() As String, i As Long
+        parts = Split(folderPath, "\")
+        For i = LBound(parts) To UBound(parts)
+            If Len(Trim$(parts(i))) > 0 Then
+                Set targetFolder = targetFolder.Folders(Trim$(parts(i)))
+            End If
+        Next i
+    End If
+
+    Set WatchedItems = targetFolder.Items
+    Mail2TDM.WriteLog "Слежение запущено. Папка: " & targetFolder.FolderPath
+    Exit Sub
+
+Fail:
+    Mail2TDM.WriteLog "СБОЙ при подключении к папке: " & Err.Number & " " & Err.Description
+End Sub
+
+
+' Срабатывает на каждое новое письмо в папке
+Private Sub WatchedItems_ItemAdd(ByVal Item As Object)
+    On Error GoTo Fail
+    If TypeOf Item Is Outlook.MailItem Then
+        Mail2TDM.ProcessMail Item
+    End If
+    Exit Sub
+Fail:
+    Mail2TDM.WriteLog "СБОЙ в ItemAdd: " & Err.Number & " " & Err.Description
+End Sub
+
+
+' Ручной перезапуск слежения (можно вызвать, если менял настройки)
+Public Sub Mail2TDM_Restart()
+    HookFolder
+    MsgBox "Слежение перезапущено. Подробности в журнале.", vbInformation
+End Sub
