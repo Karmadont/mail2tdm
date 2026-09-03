@@ -9,6 +9,8 @@
 config.ini
 */config.ini
 mail2tdm.log
+mail2tdm_seen.json
+*/mail2tdm_seen.json
 
 # Документация TDM — внутренний документ, не для публичного репозитория
 *.pdf

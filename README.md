@@ -23,18 +23,26 @@
 
 ## Как запустить
 
-Полная пошаговая инструкция — в файле [outlook/README-outlook.md](outlook/README-outlook.md).
+Полная пошаговая инструкция — в файле [python/README-python.md](python/README-python.md).
 
 Коротко:
 
-1. Получить токен бота у техподдержки мессенджера.
-2. Создать файл настроек `%APPDATA%\mail2tdm\config.ini` по образцу
-   `outlook/config.example.ini`.
-3. Проверить связь: `tools/tdm-check.ps1`.
-4. Вставить макрос в Outlook (`outlook/Mail2TDM.bas`).
+1. Положить `python/mail2tdm.py` и `python/tdm_client.py` на рабочий компьютер.
+2. Проверить, что программа исправна — **токен и интернет для этого не нужны**:
+   ```
+   python mail2tdm.py --selftest
+   ```
+3. Заполнить `config.ini` по образцу `python/config.example.ini`
+   (токен от бота Bot Creator, адрес сервера, ID канала).
+4. Проверить связь: `python mail2tdm.py --check`
+5. Подключить чтение почты: `pip install --user pywin32`, затем
+   `python mail2tdm.py --once`
 
 **Первый запуск — только в тестовом режиме** (`TestMode=1`): программа ничего
 не отправляет, а лишь записывает в журнал, что *было бы* отправлено.
+
+Docker для работы **не нужен** — он использовался только разработчиком
+для проверок.
 
 ## Настройки и пароли
 
@@ -72,7 +80,12 @@ mail2tdm/
 ├── README.md      — этот файл: что за проект и как с ним работать
 ├── .gitignore     — список того, что не выкладывать на GitHub
 ├── .env.example   — образец файла с настройками (без паролей)
-├── outlook/       — макрос для Outlook (основное решение)
+├── python/        — ОСНОВНОЕ РЕШЕНИЕ (программа на Python)
+│   ├── mail2tdm.py         — главная программа
+│   ├── tdm_client.py       — работа с Bot API мессенджера
+│   ├── config.example.ini  — образец настроек (без токена)
+│   └── README-python.md    — установка и запуск, пошагово
+├── outlook/       — запасной вариант: макрос для Outlook (без установки Python)
 │   ├── Mail2TDM.bas              — код: отбор писем, оформление, отправка
 │   ├── ThisOutlookSession.vba.txt— "сторож" новых писем
 │   ├── config.example.ini        — образец настроек (без токена)
